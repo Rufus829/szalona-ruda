@@ -1,20 +1,28 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<title>Sökmotor</title>
+</head>
+<body>
+<h1>Min sökmotor 🔎</h1>
+<input id="q" placeholder="Sök något..." />
+<button onclick="search()">Sök</button>
+<div id="results"></div>
+
 <script>
 async function search() {
-  const q = document.getElementById("q").value;
-  const res = await fetch(
-    "https://white-thunder-be12.20rufus11.workers.dev/" + encodeURIComponent(q)
-  );
-
-  const data = await res.json();
-
-  document.getElementById("results").innerHTML =
-    data.organic_results.map(r => `
-      <div style="margin:20px; text-align:left;">
-        <a href="${r.link}" target="_blank" style="color:#4da6ff; font-size:18px;">
-          ${r.title}
-        </a>
-        <p>${r.snippet || ""}</p>
-      </div>
-    `).join("");
+  const q = document.getElementById("q").value.trim();
+  const results = document.getElementById("results");
+  if (!q) { results.innerText="Skriv något!"; return; }
+  results.innerText="Söker...";
+  try {
+    const res = await fetch("https://white-thunder-be12.20rufus11.workers.dev/"+encodeURIComponent(q));
+    const data = await res.json();
+    if (!data.organic_results) { results.innerText="Inga resultat 😭"; return; }
+    results.innerHTML = data.organic_results.map(r=>`<div><a href="${r.link}" target="_blank">${r.title}</a><p>${r.snippet||""}</p></div>`).join("");
+  } catch(e){ results.innerText="Fel 😭"; console.error(e);}
 }
 </script>
+</body>
+</html>
