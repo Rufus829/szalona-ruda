@@ -1,45 +1,24 @@
-<!DOCTYPE html>
-<html lang="sv">
-<head>
-  <meta charset="UTF-8">
-  <title>Sökmotor</title>
-  <style>
-    body {
-      background: #111;
-      color: white;
-      font-family: Arial;
-      text-align: center;
-      padding: 50px;
-    }
-    input {
-      padding: 10px;
-      width: 300px;
-    }
-  </style>
-</head>
-<body>
-
-<h1>Min riktiga sökmotor 🔥</h1>
-
-<input id="q" placeholder="Sök på Wikipedia..." />
-<button onclick="search()">Sök</button>
-
-<div id="results"></div>
-
 <script>
 async function search() {
   const q = document.getElementById("q").value;
-  const url = `https://sv.wikipedia.org/w/api.php?action=query&list=search&srsearch=${q}&format=json&origin=*`;
+  const url =
+    `https://sv.wikipedia.org/w/api.php?action=query&list=search&srsearch=${q}&format=json&origin=*`;
 
   const res = await fetch(url);
   const data = await res.json();
 
   document.getElementById("results").innerHTML =
     data.query.search.map(item =>
-      `<p><b>${item.title}</b><br>${item.snippet}...</p>`
+      `
+      <div style="margin:20px; text-align:left;">
+        <a href="https://sv.wikipedia.org/wiki/${encodeURIComponent(item.title)}"
+           target="_blank"
+           style="color:#4da6ff; font-size:18px;">
+           ${item.title}
+        </a>
+        <p>${item.snippet}...</p>
+      </div>
+      `
     ).join("");
 }
 </script>
-
-</body>
-</html>
