@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nusse_Proxy</title>
+    <title>Sökmotor</title>
     <style>
         * {
             margin: 0;
@@ -105,25 +105,27 @@
             margin-bottom: 15px;
             border-radius: 10px;
             border-left: 4px solid #667eea;
-            transition: transform 0.2s;
+            transition: all 0.2s;
+            cursor: pointer;
         }
 
         .result:hover {
             transform: translateX(5px);
             background: #f0f2f5;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
         }
 
-        .result h3 {
-            margin-bottom: 8px;
-            font-size: 1.2em;
-        }
-
-        .result a {
+        .result-title {
             color: #1a73e8;
+            font-size: 1.2em;
+            font-weight: 600;
             text-decoration: none;
+            display: block;
+            margin-bottom: 5px;
+            cursor: pointer;
         }
 
-        .result a:hover {
+        .result-title:hover {
             text-decoration: underline;
         }
 
@@ -132,9 +134,10 @@
             font-size: 0.9em;
             margin-bottom: 8px;
             display: block;
+            word-break: break-all;
         }
 
-        .result p {
+        .result-snippet {
             color: #555;
             line-height: 1.5;
         }
@@ -151,6 +154,22 @@
             text-align: center;
             color: #666;
             padding: 40px;
+        }
+
+        .visit-btn {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #4CAF50;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-size: 0.9em;
+            transition: background 0.2s;
+        }
+
+        .visit-btn:hover {
+            background: #45a049;
         }
     </style>
 </head>
@@ -172,7 +191,7 @@
     </div>
 
     <script>
-        const WORKER_URL = 'https://nusseproxy.20rufus11.workers.dev/?q=';
+        const WORKER_URL = 'https://nusseproxy.20rufus11.workers.dev';
 
         async function search() {
             const query = document.getElementById('query').value.trim();
@@ -223,10 +242,10 @@
             const resultsDiv = document.getElementById('results');
             const statsDiv = document.getElementById('stats');
             
-            // Hämta organic_results (kan heta olika beroende på svar)
-            const results = data.organic_results || data.results || [];
+            // Hämta organic_results
+            const results = data.organic_results || [];
             
-            // Visa statistik om tillgänglig
+            // Visa statistik
             if (data.search_information) {
                 statsDiv.innerHTML = `<div class="stats">Ungefär ${data.search_information.total_results || 0} resultat (${data.search_information.time_taken_displayed || 0} sekunder)</div>`;
             }
@@ -236,388 +255,49 @@
                 return;
             }
 
-            resultsDiv.innerHTML = results.map(r => `
-                <div class="result">
-                    <h3><a href="${r.link}" target="_blank">${r.title}</a></h3>
-                    <span class="result-url">${r.displayed_url || r.link}</span>
-                    <p>${r.snippet || 'Ingen beskrivning tillgänglig'}</p>
+            // Bygg HTML för resultaten - VIKTIGT: använd onclick för att öppna länkar
+            resultsDiv.innerHTML = results.map((r, index) => `
+                <div class="result" onclick="openLink('${escapeHtml(r.link)}')">
+                    <a href="${escapeHtml(r.link)}" 
+                       target="_blank" 
+                       rel="noopener noreferrer"
+                       class="result-title"
+                       onclick="event.stopPropagation()">
+                        ${escapeHtml(r.title)}
+                    </a>
+                    <span class="result-url">${escapeHtml(r.displayed_url || r.link)}</span>
+                    <p class="result-snippet">${escapeHtml(r.snippet || 'Ingen beskrivning tillgänglig')}</p>
+                    <a href="${escapeHtml(r.link)}" 
+                       target="_blank" 
+                       rel="noopener noreferrer"
+                       class="visit-btn"
+                       onclick="event.stopPropagation()">
+                        Besök hemsida →
+                    </a>
                 </div>
             `).join('');
+        }
+
+        // Funktion för att öppna länkar (både från klick på hela rutan och från länkar)
+        function openLink(url) {
+            window.open(url, '_blank', 'noopener,noreferrer');
+        }
+
+        // Hjälpfunktion för att skydda mot XSS
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
         }
 
         function showError(msg) {
             const errorDiv = document.getElementById('error');
             errorDiv.textContent = msg;
             errorDiv.style.display = 'block';
-        }
-    </script>
-</body>
-</html><!DOCTYPE html>
-<html lang="sv">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nusse proxy</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
-        }
-
-        .container {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border-radius: 24px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
-            width: 100%;
-            max-width: 800px;
-            padding: 40px;
-            animation: slideUp 0.6s ease-out;
-        }
-
-        @keyframes slideUp {
-            from {
-                opacity: 0;
-                transform: translateY(30px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        h1 {
-            color: #1a202c;
-            font-size: 2rem;
-            margin-bottom: 8px;
-            font-weight: 700;
-        }
-
-        .subtitle {
-            color: #718096;
-            margin-bottom: 30px;
-            font-size: 0.95rem;
-        }
-
-        .search-box {
-            position: relative;
-            margin-bottom: 30px;
-        }
-
-        .search-input {
-            width: 100%;
-            padding: 16px 20px;
-            font-size: 16px;
-            border: 2px solid #e2e8f0;
-            border-radius: 12px;
-            outline: none;
-            transition: all 0.3s ease;
-            background: #f7fafc;
-        }
-
-        .search-input:focus {
-            border-color: #667eea;
-            background: white;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        .search-btn {
-            position: absolute;
-            right: 8px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 10px 24px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-weight: 600;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .search-btn:hover {
-            transform: translateY(-50%) scale(1.05);
-            box-shadow: 0 10px 20px -5px rgba(102, 126, 234, 0.4);
-        }
-
-        .search-btn:active {
-            transform: translateY(-50%) scale(0.95);
-        }
-
-        .search-btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: translateY(-50%);
-        }
-
-        .spinner {
-            display: none;
-            width: 20px;
-            height: 20px;
-            border: 3px solid rgba(255,255,255,0.3);
-            border-radius: 50%;
-            border-top-color: white;
-            animation: spin 1s ease-in-out infinite;
-            margin-right: 8px;
-            vertical-align: middle;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .results {
-            display: none;
-            animation: fadeIn 0.5s ease-out;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
-        .result-item {
-            background: white;
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 20px;
-            margin-bottom: 16px;
-            transition: all 0.3s ease;
-            cursor: pointer;
-        }
-
-        .result-item:hover {
-            transform: translateX(5px);
-            border-color: #667eea;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        }
-
-        .result-title {
-            color: #667eea;
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-            text-decoration: none;
-            display: block;
-        }
-
-        .result-title:hover {
-            text-decoration: underline;
-        }
-
-        .result-url {
-            color: #38a169;
-            font-size: 0.85rem;
-            margin-bottom: 8px;
-            display: block;
-        }
-
-        .result-snippet {
-            color: #4a5568;
-            line-height: 1.6;
-            font-size: 0.95rem;
-        }
-
-        .error-message {
-            background: #fed7d7;
-            color: #c53030;
-            padding: 16px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            display: none;
-            border-left: 4px solid #fc8181;
-        }
-
-        .stats {
-            color: #718096;
-            font-size: 0.9rem;
-            margin-bottom: 20px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid #e2e8f0;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 60px 20px;
-            color: #a0aec0;
-        }
-
-        .empty-state svg {
-            width: 80px;
-            height: 80px;
-            margin-bottom: 20px;
-            opacity: 0.5;
-        }
-
-        @media (max-width: 640px) {
-            .container {
-                padding: 24px;
-            }
-            
-            h1 {
-                font-size: 1.5rem;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Nusse proxy</h1>
-        <p class="subtitle">Sök via SerpAPI genom Cloudflare Worker</p>
-        
-        <div class="error-message" id="errorMsg"></div>
-        
-        <div class="search-box">
-            <input 
-                type="text" 
-                class="search-input" 
-                id="searchInput" 
-                placeholder="Skriv din sökfråga här..."
-                autocomplete="off"
-            >
-            <button class="search-btn" id="searchBtn" onclick="performSearch()">
-                <span class="spinner" id="spinner"></span>
-                <span id="btnText">Sök</span>
-            </button>
-        </div>
-
-        <div id="resultsContainer" class="results">
-            <div class="stats" id="stats"></div>
-            <div id="resultsList"></div>
-        </div>
-
-        <div class="empty-state" id="emptyState">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="11" cy="11" r="8"></circle>
-                <path d="m21 21-4.35-4.35"></path>
-            </svg>
-            <p>Börja skriva för att söka</p>
-        </div>
-    </div>
-
-    <script>
-        // Konfiguration - UPPDATERA MED DIN CLOUDFLARE WORKER URL
-        const CONFIG = {
-            WORKER_URL: 'https://nusseproxy.20rufus11.workers.dev?q=', // Ändra detta!
-            DEFAULT_ENGINE: 'google'
-        };
-
-        const searchInput = document.getElementById('searchInput');
-        const searchBtn = document.getElementById('searchBtn');
-        const spinner = document.getElementById('spinner');
-        const btnText = document.getElementById('btnText');
-        const resultsContainer = document.getElementById('resultsContainer');
-        const resultsList = document.getElementById('resultsList');
-        const stats = document.getElementById('stats');
-        const emptyState = document.getElementById('emptyState');
-        const errorMsg = document.getElementById('errorMsg');
-
-        // Enter-tangent för sökning
-        searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') performSearch();
-        });
-
-        async function performSearch() {
-            const query = searchInput.value.trim();
-            
-            if (!query) {
-                showError('Vänligen ange en sökfråga');
-                return;
-            }
-
-            // Kontrollera att WORKER_URL är konfigurerad
-            if (CONFIG.WORKER_URL.includes('https://nusseproxy.20rufus11.workers.dev/')) {
-                showError('Du måste uppdatera WORKER_URL i konfigurationen med din faktiska Cloudflare Worker URL');
-                return;
-            }
-
-            setLoading(true);
-            hideError();
-
-            try {
-                // Anropa Cloudflare Worker
-                const response = await fetch(`${CONFIG.WORKER_URL}?q=${encodeURIComponent(query)}&engine=${CONFIG.DEFAULT_ENGINE}`, {
-                    method: 'GET',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    }
-                });
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
-                const data = await response.json();
-                displayResults(data);
-
-            } catch (error) {
-                console.error('Sökfel:', error);
-                showError('Kunde inte utföra sökningen. Kontrollera att din Cloudflare Worker är korrekt konfigurerad.');
-            } finally {
-                setLoading(false);
-            }
-        }
-
-        function displayResults(data) {
-            emptyState.style.display = 'none';
-            resultsContainer.style.display = 'block';
-
-            // Visa statistik om tillgänglig
-            if (data.search_information) {
-                stats.textContent = `Ungefär ${data.search_information.total_results || 0} resultat (${data.search_information.time_taken_displayed || 0} sekunder)`;
-            }
-
-            // Rensa tidigare resultat
-            resultsList.innerHTML = '';
-
-            // Hantera olika resultattyper från SerpAPI
-            const results = data.organic_results || data.results || [];
-            
-            if (results.length === 0) {
-                resultsList.innerHTML = '<div class="empty-state"><p>Inga resultat hittades</p></div>';
-                return;
-            }
-
-            results.forEach(result => {
-                const item = document.createElement('div');
-                item.className = 'result-item';
-                item.innerHTML = `
-                    <a href="${result.link}" target="_blank" class="result-title">${result.title}</a>
-                    <span class="result-url">${result.displayed_url || result.link}</span>
-                    <p class="result-snippet">${result.snippet || 'Ingen beskrivning tillgänglig'}</p>
-                `;
-                resultsList.appendChild(item);
-            });
-        }
-
-        function setLoading(loading) {
-            searchBtn.disabled = loading;
-            spinner.style.display = loading ? 'inline-block' : 'none';
-            btnText.textContent = loading ? 'Söker...' : 'Sök';
-        }
-
-        function showError(message) {
-            errorMsg.textContent = message;
-            errorMsg.style.display = 'block';
-            setTimeout(() => {
-                errorMsg.style.display = 'none';
-            }, 5000);
-        }
-
-        function hideError() {
-            errorMsg.style.display = 'none';
         }
     </script>
 </body>
