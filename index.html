@@ -14,15 +14,20 @@
 async function search() {
   const q = document.getElementById("q").value.trim();
   const results = document.getElementById("results");
-  if (!q) { results.innerText="Skriv något!"; return; }
-  results.innerText="Söker...";
+
+  if (!q) {
+    results.innerText = "Skriv något att söka på!";
+    return;
+  }
+
+  results.innerText = "Söker...";
+
   try {
-    const res = await fetch("https://white-thunder-be12.20rufus11.workers.dev/"+encodeURIComponent(q));
+    const res = await fetch(
+      "https://white-thunder-be12.20rufus11.workers.dev/?q=" + encodeURIComponent(q)
+    );
+
     const data = await res.json();
-    if (!data.organic_results) { results.innerText="Inga resultat 😭"; return; }
-    results.innerHTML = data.organic_results.map(r=>`<div><a href="${r.link}" target="_blank">${r.title}</a><p>${r.snippet||""}</p></div>`).join("");
-  } catch(e){ results.innerText="Fel 😭"; console.error(e);}
-}
-</script>
+<script>
 </body>
 </html>
