@@ -1,33 +1,26 @@
 <!DOCTYPE html>
-<html lang="sv">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Sökmotor</title>
+<title>Test</title>
 </head>
 <body>
-<h1>Min sökmotor 🔎</h1>
-<input id="q" placeholder="Sök något..." />
+
+<h1>Test sökmotor</h1>
+
+<input id="q" placeholder="Skriv något">
 <button onclick="search()">Sök</button>
+
 <div id="results"></div>
 
 <script>
 async function search() {
-  const q = document.getElementById("q").value.trim();
+  const q = document.getElementById("q").value;
   const results = document.getElementById("results");
 
-  if (!q) {
-    results.innerText = "Skriv något att söka på!";
-    return;
-  }
+  results.innerText = "Knappen funkar. Du skrev: " + q;
+}
+</script>
 
-  results.innerText = "Söker...";
-
-  try {
-    const res = await fetch(
-      "https://white-thunder-be12.20rufus11.workers.dev/?q=" + encodeURIComponent(q)
-    );
-
-    const data = await res.json();
-<script>
 </body>
 </html>
