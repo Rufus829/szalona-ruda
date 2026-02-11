@@ -1,3 +1,44 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<title>Min Sökmotor</title>
+<style>
+body {
+  background: #111;
+  color: white;
+  font-family: Arial;
+  text-align: center;
+  padding: 40px;
+}
+input {
+  padding: 10px;
+  width: 300px;
+}
+button {
+  padding: 10px;
+  cursor: pointer;
+}
+.result {
+  margin: 20px auto;
+  max-width: 600px;
+  text-align: left;
+}
+a {
+  color: #4da6ff;
+  font-size: 18px;
+}
+</style>
+</head>
+<body>
+
+<h1>Min Sökmotor 🔎</h1>
+
+<input id="q" placeholder="Sök något..." />
+<button onclick="search()">Sök</button>
+
+<div id="results"></div>
+
 <script>
 async function search() {
   const q = document.getElementById("q").value.trim();
@@ -11,28 +52,8 @@ async function search() {
   results.innerText = "Söker...";
 
   try {
-    const res = await fetch("https://white-thunder-be12.20rufus11.workers.dev/?q=" + encodeURIComponent(q));
+    const res = await fetch(
+      "https://white-thunder-be12.20rufus11.workers.dev/?q=" + encodeURIComponent(q)
+    );
 
     const data = await res.json();
-    console.log(data);
-
-    if (!data.organic_results) {
-      results.innerText = "Inga resultat hittades.";
-      return;
-    }
-
-    results.innerHTML = data.organic_results.map(r => `
-      <div style="margin:20px 0;">
-        <a href="${r.link}" target="_blank" style="font-size:18px;">
-          ${r.title}
-        </a>
-        <p>${r.snippet || ""}</p>
-      </div>
-    `).join("");
-
-  } catch (error) {
-    results.innerText = "Fel vid hämtning.";
-    console.error(error);
-  }
-}
-</script>
