@@ -9,52 +9,28 @@ body {
   color: white;
   font-family: Arial;
   text-align: center;
-  padding: 40px;
+  padding-top: 100px;
 }
 input {
-  padding: 10px;
+  padding: 12px;
   width: 300px;
+  font-size: 16px;
 }
 button {
-  padding: 10px;
+  padding: 12px;
+  font-size: 16px;
   cursor: pointer;
-}
-.result {
-  margin: 20px auto;
-  max-width: 600px;
-  text-align: left;
-}
-a {
-  color: #4da6ff;
-  font-size: 18px;
 }
 </style>
 </head>
 <body>
 
-<h1>Min Sökmotor 🔎</h1>
+<h1>Nusse Proxy</h1>
 
-<input id="q" placeholder="Sök något..." />
-<button onclick="search()">Sök</button>
+<form action="https://www.google.com/search" method="GET">
+  <input type="text" name="q" placeholder="Sök på webben..." required>
+  <button type="submit">Sök</button>
+</form>
 
-<div id="results"></div>
-
-<script>
-async function search() {
-  const q = document.getElementById("q").value.trim();
-  const results = document.getElementById("results");
-
-  if (!q) {
-    results.innerText = "Skriv något!";
-    return;
-  }
-
-  results.innerText = "Söker...";
-
-  try {
-    const res = await fetch(
-      "https://white-thunder-be12.20rufus11.workers.dev/?q=" + encodeURIComponent(q)
-    );
-
-    const data = await res.json();
- <script>
+</body>
+</html>
