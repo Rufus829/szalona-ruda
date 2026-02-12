@@ -2,170 +2,12 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     
-    // Proxy-endpoint
-    if (url.pathname === '/proxy') {
-      const targetUrl = url.searchParams.get('url');
-      if (!targetUrl) {
-        return new Response('Saknar URL', { status: 400 });
-      }
-      
-      try {
-        const response = await fetch(targetUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'sv-SE,sv;q=0.9,en-US;q=0.8,en;q=0.7',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0'
-          }
-        });
-        
-        const contentType = response.headers.get('content-type') || 'text/html';
-        
-        // Om det inte är HTML, skicka vidare som är
-        if (!contentType.includes('text/html')) {
-          const newHeaders = new Headers(response.headers);
-          newHeaders.set('Access-Control-Allow-Origin', '*');
-          newHeaders.delete('X-Frame-Options');
-          newHeaders.delete('Content-Security-Policy');
-          return new Response(response.body, {
-            status: response.status,
-            headers: newHeaders
-          });
-        }
-        
-        let html = await response.text();
-        const baseUrl = new URL(targetUrl);
-        
-        // Fixa relativa URL:er till absoluta
-        html = html.replace(/href="\/([^"]*)"/gi, 'href="' + baseUrl.origin + '/$1"');
-        html = html.replace(/src="\/([^"]*)"/gi, 'src="' + baseUrl.origin + '/$1"');
-        html = html.replace(/url\(\/([^)]*)\)/gi, 'url(' + baseUrl.origin + '/$1)');
-        html = html.replace(/href="([^":]*)"/gi, function(match, p1) {
-          if (p1.startsWith('http') || p1.startsWith('#') || p1.startsWith('javascript') || p1.startsWith('mailto')) return match;
-          return 'href="' + baseUrl.origin + '/' + p1 + '"';
-        });
-        html = html.replace(/src="([^":]*)"/gi, function(match, p1) {
-          if (p1.startsWith('http') || p1.startsWith('data:')) return match;
-          return 'src="' + baseUrl.origin + '/' + p1 + '"';
-        });
-        
-        // Ta bort blockerande headers meta tags
-        html = html.replace(/<meta[^>]*http-equiv=["']X-Frame-Options["'][^>]*>/gi, '');
-        html = html.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>/gi, '');
-        html = html.replace(/<meta[^>]*http-equiv=["']Content-Security-Policy["'][^>]*>[\s\S]*?>/gi, '');
-        
-        // Lägg till base tag
-        if (!html.includes('<base')) {
-          html = html.replace('<head>', '<head><base href="' + baseUrl.origin + '/" target="_self">');
-        }
-        
-        // Injicera fix-skript för klick och formulär
-        const fixScript = `
-<script>
-(function() {
-  'use strict';
-  
-  // Fånga alla länkar
-  document.addEventListener('click', function(e) {
-    const link = e.target.closest('a');
-    if (link) {
-      const href = link.getAttribute('href');
-      if (href && !href.startsWith('javascript:') && !href.startsWith('#') && !href.startsWith('mailto:') && !href.startsWith('tel:')) {
-        e.preventDefault();
-        e.stopPropagation();
-        
-        let targetUrl = href;
-        if (!targetUrl.startsWith('http')) {
-          const base = document.querySelector('base')?.href || window.location.origin + '/';
-          targetUrl = new URL(targetUrl, base).href;
-        }
-        
-        window.location.href = '/proxy?url=' + encodeURIComponent(targetUrl);
-        return false;
-      }
-    }
-  }, true);
-  
-  // Fånga alla formulär
-  document.addEventListener('submit', function(e) {
-    const form = e.target;
-    if (form && form.tagName === 'FORM') {
-      e.preventDefault();
-      e.stopPropagation();
-      
-      const formData = new FormData(form);
-      const params = new URLSearchParams(formData);
-      let action = form.action || window.location.href;
-      
-      if (!action.startsWith('http')) {
-        const base = document.querySelector('base')?.href || window.location.origin + '/';
-        action = new URL(action, base).href;
-      }
-      
-      const url = action + (action.includes('?') ? '&' : '?') + params.toString();
-      window.location.href = '/proxy?url=' + encodeURIComponent(url);
-      return false;
-    }
-  }, true);
-  
-  // Fixa för AJAX/fetch
-  const originalFetch = window.fetch;
-  window.fetch = function(url, options) {
-    if (typeof url === 'string' && !url.startsWith('http')) {
-      const base = document.querySelector('base')?.href || window.location.origin + '/';
-      url = new URL(url, base).href;
-    }
-    return originalFetch(url, options);
-  };
-  
-  // Fixa XMLHttpRequest
-  const originalOpen = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function(method, url, async, user, password) {
-    if (typeof url === 'string' && !url.startsWith('http')) {
-      const base = document.querySelector('base')?.href || window.location.origin + '/';
-      url = new URL(url, base).href;
-    }
-    return originalOpen.call(this, method, url, async, user, password);
-  };
-})();
-<\/script>`;
-        
-        // Lägg till script före </body> eller </head>
-        if (html.includes('</body>')) {
-          html = html.replace('</body>', fixScript + '</body>');
-        } else if (html.includes('</head>')) {
-          html = html.replace('</head>', fixScript + '</head>');
-        } else {
-          html = html + fixScript;
-        }
-        
-        return new Response(html, {
-          headers: { 
-            'Content-Type': 'text/html; charset=utf-8',
-            'Access-Control-Allow-Origin': '*',
-            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': '*',
-            'X-Frame-Options': 'SAMEORIGIN',
-            'Referrer-Policy': 'no-referrer'
-          },
-        });
-      } catch (error) {
-        return new Response('<h1>Fel: ' + error.message + '</h1><p><a href="javascript:history.back()">← Tillbaka</a></p>', { 
-          status: 500,
-          headers: { 'Content-Type': 'text/html' }
-        });
-      }
+    if (url.pathname === '/' && !url.searchParams.has('q')) {
+      return new Response(HTML_PAGE, {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
     }
     
-    // Sök-API
     if (url.searchParams.has('q')) {
       const corsHeaders = {
         'Content-Type': 'application/json',
@@ -201,7 +43,6 @@ export default {
       }
     }
     
-    // HTML-sidan
     return new Response(HTML_PAGE, {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
     });
@@ -216,45 +57,43 @@ const HTML_PAGE = `<!DOCTYPE html>
     <title>Nusse Proxy</title>
     <style>
         :root {
-            --bg-primary: #1a1a2e;
-            --bg-secondary: #16213e;
-            --bg-tertiary: #0f3460;
-            --accent: #e94560;
-            --accent-hover: #ff6b6b;
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a25;
+            --accent: #ff3366;
+            --accent-hover: #ff5588;
+            --accent-secondary: #00d4ff;
             --text-primary: #ffffff;
-            --text-secondary: #a0a0a0;
-            --text-tertiary: #888888;
-            --border: #e94560;
-            --result-bg: rgba(255,255,255,0.05);
-            --result-hover: rgba(233, 69, 96, 0.1);
-            --input-bg: rgba(255,255,255,0.1);
-            --tab-bg: rgba(255,255,255,0.05);
-            --success: #4caf50;
-            --warning: #ff9800;
+            --text-secondary: #a0a0b0;
+            --text-tertiary: #606070;
+            --border: rgba(255, 51, 102, 0.3);
+            --glass: rgba(255, 255, 255, 0.03);
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
         }
 
         [data-theme="light"] {
-            --bg-primary: #f5f5f5;
+            --bg-primary: #f0f0f5;
             --bg-secondary: #ffffff;
-            --bg-tertiary: #e8e8e8;
-            --accent: #00809d;
-            --accent-hover: #006a80;
-            --text-primary: #333333;
-            --text-secondary: #666666;
-            --text-tertiary: #888888;
-            --border: #00809d;
-            --result-bg: #ffffff;
-            --result-hover: #e8f0fe;
-            --input-bg: #ffffff;
-            --tab-bg: #f0f0f0;
-            --success: #4caf50;
-            --warning: #ff9800;
+            --bg-tertiary: #e8e8f0;
+            --accent: #0066cc;
+            --accent-hover: #0088ff;
+            --accent-secondary: #00a0a0;
+            --text-primary: #1a1a2e;
+            --text-secondary: #505060;
+            --text-tertiary: #808090;
+            --border: rgba(0, 102, 204, 0.3);
+            --glass: rgba(255, 255, 255, 0.7);
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
         }
 
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        * { 
+            margin: 0; 
+            padding: 0; 
+            box-sizing: border-box;
+        }
         
         body { 
-            font-family: 'Segoe UI', system-ui, sans-serif; 
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; 
             height: 100vh; 
             overflow: hidden;
             background: var(--bg-primary);
@@ -267,188 +106,134 @@ const HTML_PAGE = `<!DOCTYPE html>
         }
         
         .sidebar { 
-            width: 400px;
-            min-width: 400px;
+            width: 420px;
+            min-width: 420px;
             background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
-            border-right: 2px solid var(--border);
+            border-right: 1px solid var(--border);
             display: flex; 
             flex-direction: column;
-            transition: all 0.3s ease;
-            position: relative;
+            box-shadow: var(--shadow);
         }
         
-        .sidebar.hidden {
-            width: 60px;
-            min-width: 60px;
-        }
-        
-        .sidebar.hidden .search-content {
-            opacity: 0;
-            pointer-events: none;
-        }
-
         .header {
-            padding: 15px 20px;
-            background: rgba(233, 69, 96, 0.1);
-            border-bottom: 2px solid var(--border);
-            position: relative;
-        }
-
-        [data-theme="light"] .header {
-            background: rgba(0, 128, 157, 0.1);
+            padding: 25px 20px;
+            background: linear-gradient(135deg, rgba(255, 51, 102, 0.1) 0%, rgba(0, 212, 255, 0.05) 100%);
+            border-bottom: 1px solid var(--border);
         }
         
         .logo {
-            color: var(--accent);
-            font-size: 20px;
-            font-weight: bold;
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 12px;
+            font-size: 26px;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-secondary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
-        .ai-badge {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            font-size: 10px;
-            padding: 2px 8px;
-            border-radius: 12px;
-            font-weight: bold;
-            display: none;
-        }
-
-        .ai-mode .ai-badge {
-            display: inline-block;
-        }
-        
         .logo-icon {
-            font-size: 24px;
+            font-size: 32px;
+            -webkit-text-fill-color: initial;
         }
         
         .subtitle {
             color: var(--text-secondary);
-            font-size: 11px;
-            margin-top: 3px;
-        }
-        
-        .toggle-btn {
-            position: absolute;
-            right: -15px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 30px;
-            height: 60px;
-            background: var(--accent);
-            border: none;
-            border-radius: 0 8px 8px 0;
-            color: white;
-            cursor: pointer;
-            font-size: 16px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 100;
-            transition: all 0.3s;
-        }
-        
-        .toggle-btn:hover {
-            background: var(--accent-hover);
-            width: 35px;
-        }
-        
-        .sidebar.hidden .toggle-btn {
-            right: -30px;
-            border-radius: 8px;
-        }
-        
-        .search-content {
-            transition: opacity 0.2s;
-            display: flex;
-            flex-direction: column;
-            height: 100%;
+            font-size: 12px;
+            margin-top: 6px;
+            margin-left: 44px;
+            letter-spacing: 0.5px;
         }
         
         .search-box { 
-            padding: 15px; 
-            border-bottom: 1px solid rgba(233, 69, 96, 0.2);
+            padding: 20px; 
+            border-bottom: 1px solid var(--border);
         }
         
-        .search-input-wrapper {
+        .search-wrapper {
             position: relative;
+            display: flex;
+            gap: 10px;
         }
         
         input { 
-            width: 100%; 
-            padding: 10px 35px 10px 12px; 
-            background: var(--input-bg);
-            border: 2px solid rgba(233, 69, 96, 0.3);
-            border-radius: 20px; 
+            flex: 1;
+            padding: 14px 20px;
+            background: var(--glass);
+            border: 2px solid var(--border);
+            border-radius: 30px; 
             color: var(--text-primary);
-            font-size: 13px;
+            font-size: 14px;
             outline: none;
-        }
-
-        [data-theme="light"] input {
-            border-color: rgba(0, 128, 157, 0.3);
+            transition: all 0.3s ease;
         }
         
-        input::placeholder {
+        input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px rgba(255, 51, 102, 0.2);
+        }
+        
+        input::placeholder { 
             color: var(--text-tertiary);
         }
         
         .search-btn {
-            position: absolute;
-            right: 5px;
-            top: 50%;
-            transform: translateY(-50%);
-            background: var(--accent);
-            border: none;
-            width: 28px;
-            height: 28px;
+            width: 50px;
+            height: 50px;
             border-radius: 50%;
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+            border: none;
             color: white;
+            font-size: 18px;
             cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(255, 51, 102, 0.3);
+        }
+        
+        .search-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(255, 51, 102, 0.4);
         }
 
         .tabs {
             display: flex;
-            border-bottom: 1px solid rgba(233, 69, 96, 0.2);
-            overflow-x: auto;
+            padding: 0 20px;
+            gap: 5px;
+            border-bottom: 1px solid var(--border);
         }
 
         .tab {
             flex: 1;
-            min-width: 80px;
-            padding: 10px;
+            padding: 12px;
             background: transparent;
             border: none;
             color: var(--text-secondary);
             cursor: pointer;
-            font-size: 12px;
+            font-size: 13px;
+            font-weight: 500;
             transition: all 0.3s;
             border-bottom: 2px solid transparent;
-            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
         }
 
         .tab:hover {
             color: var(--accent);
-            background: rgba(233, 69, 96, 0.05);
+            background: rgba(255, 51, 102, 0.05);
         }
 
         .tab.active {
             color: var(--accent);
             border-bottom-color: var(--accent);
-            background: rgba(233, 69, 96, 0.1);
         }
         
         .results { 
             flex: 1; 
             overflow-y: auto; 
-            padding: 10px;
+            padding: 15px;
             display: none;
         }
 
@@ -461,7 +246,7 @@ const HTML_PAGE = `<!DOCTYPE html>
         }
         
         .results::-webkit-scrollbar-track {
-            background: rgba(0,0,0,0.2);
+            background: transparent;
         }
         
         .results::-webkit-scrollbar-thumb {
@@ -469,163 +254,123 @@ const HTML_PAGE = `<!DOCTYPE html>
             border-radius: 3px;
         }
 
-        .results-count {
-            padding: 10px;
+        .results-header {
+            padding: 10px 5px;
             color: var(--text-secondary);
             font-size: 12px;
-            border-bottom: 1px solid rgba(233, 69, 96, 0.1);
+            font-weight: 500;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 15px;
         }
         
         .result { 
-            background: var(--result-bg);
-            padding: 12px; 
-            margin-bottom: 8px; 
-            border-radius: 8px; 
-            cursor: pointer; 
-            border-left: 3px solid transparent;
-            transition: all 0.2s;
-            position: relative;
+            background: var(--glass);
+            padding: 18px; 
+            margin-bottom: 12px; 
+            border-radius: 16px; 
+            border: 1px solid transparent;
+            transition: all 0.3s ease;
         }
         
         .result:hover { 
-            background: var(--result-hover);
-            border-left-color: var(--accent);
-            transform: translateX(3px);
-        }
-
-        .bookmark-btn {
-            position: absolute;
-            right: 8px;
-            top: 8px;
-            background: none;
-            border: none;
-            font-size: 16px;
-            cursor: pointer;
-            opacity: 0;
-            transition: all 0.3s;
-        }
-
-        .result:hover .bookmark-btn {
-            opacity: 1;
+            background: rgba(255, 51, 102, 0.08);
+            border-color: var(--border);
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
         }
         
         .result-title { 
-            color: #4fbdba; 
-            font-weight: 600; 
-            margin-bottom: 4px;
-            font-size: 13px;
-            padding-right: 25px;
-        }
-
-        [data-theme="light"] .result-title {
-            color: #00809d;
+            color: var(--accent-secondary); 
+            font-weight: 700; 
+            margin-bottom: 8px;
+            font-size: 15px;
+            line-height: 1.3;
         }
         
         .result-url { 
-            color: #7ec8c3; 
-            font-size: 10px; 
-            margin-bottom: 4px;
+            color: var(--accent); 
+            font-size: 11px; 
+            margin-bottom: 10px;
             word-break: break-all;
-        }
-
-        [data-theme="light"] .result-url {
-            color: #006a80;
+            opacity: 0.8;
         }
         
         .result-snippet { 
             color: var(--text-secondary); 
-            font-size: 11px; 
-            line-height: 1.3;
-        }
-        
-        .no-results, .loading, .error-msg {
-            text-align: center;
-            color: var(--text-tertiary);
-            padding: 30px 20px;
-        }
-        
-        .error-msg {
-            color: var(--accent);
+            font-size: 13px; 
+            line-height: 1.5;
+            margin-bottom: 15px;
         }
 
-        .bookmark-item, .history-item {
-            background: var(--result-bg);
-            padding: 10px;
-            margin-bottom: 8px;
-            border-radius: 6px;
+        .result-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-action {
+            flex: 1;
+            padding: 10px 16px;
+            border-radius: 10px;
+            border: none;
+            font-size: 12px;
+            font-weight: 600;
             cursor: pointer;
+            transition: all 0.3s ease;
             display: flex;
             align-items: center;
-            gap: 8px;
-            transition: all 0.2s;
+            justify-content: center;
+            gap: 6px;
         }
 
-        .bookmark-item:hover, .history-item:hover {
-            background: var(--result-hover);
-            transform: translateX(3px);
+        .btn-open {
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hover) 100%);
+            color: white;
+            box-shadow: 0 4px 15px rgba(255, 51, 102, 0.3);
         }
 
-        .bookmark-icon, .history-icon {
-            font-size: 16px;
+        .btn-open:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(255, 51, 102, 0.4);
         }
 
-        .bookmark-info, .history-info {
-            flex: 1;
-            overflow: hidden;
-        }
-
-        .bookmark-title, .history-title {
-            font-weight: 600;
+        .btn-newtab {
+            background: var(--glass);
             color: var(--text-primary);
-            font-size: 12px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+            border: 1px solid var(--border);
         }
 
-        .bookmark-url, .history-time {
-            font-size: 10px;
-            color: var(--text-tertiary);
+        .btn-newtab:hover {
+            background: rgba(0, 212, 255, 0.1);
+            border-color: var(--accent-secondary);
+            color: var(--accent-secondary);
         }
-
-        .delete-btn {
-            background: none;
-            border: none;
-            color: var(--accent);
-            cursor: pointer;
-            font-size: 14px;
-            opacity: 0;
-            transition: all 0.3s;
-        }
-
-        .bookmark-item:hover .delete-btn,
-        .history-item:hover .delete-btn {
-            opacity: 1;
-        }
-
-        .empty-list {
+        
+        .loading, .error, .empty {
             text-align: center;
-            color: var(--text-tertiary);
-            padding: 30px 20px;
-            font-style: italic;
-            font-size: 12px;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-icon {
+            font-size: 50px;
+            margin-bottom: 15px;
+            opacity: 0.5;
         }
         
         .main {
             flex: 1;
-            background: var(--bg-primary);
             display: flex;
             flex-direction: column;
-            overflow: hidden;
+            background: var(--bg-primary);
         }
 
         .tab-bar {
             display: flex;
             background: var(--bg-secondary);
-            border-bottom: 2px solid var(--border);
+            border-bottom: 1px solid var(--border);
             overflow-x: auto;
-            min-height: 40px;
-            padding: 0 5px;
+            padding: 8px 10px 0;
+            gap: 5px;
         }
 
         .tab-bar::-webkit-scrollbar {
@@ -635,43 +380,42 @@ const HTML_PAGE = `<!DOCTYPE html>
         .browser-tab {
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 8px 15px;
-            background: var(--tab-bg);
-            border-right: 1px solid rgba(233, 69, 96, 0.2);
+            gap: 10px;
+            padding: 10px 16px;
+            background: var(--glass);
+            border-radius: 12px 12px 0 0;
             cursor: pointer;
-            min-width: 100px;
-            max-width: 180px;
+            min-width: 140px;
+            max-width: 200px;
             position: relative;
-            transition: all 0.2s;
-            margin-top: 5px;
-            border-radius: 8px 8px 0 0;
+            transition: all 0.3s;
+            border: 1px solid transparent;
+            border-bottom: none;
         }
 
         .browser-tab:hover {
-            background: rgba(233, 69, 96, 0.1);
+            background: rgba(255, 51, 102, 0.1);
         }
 
         .browser-tab.active {
             background: var(--bg-primary);
+            border-color: var(--border);
             border-top: 2px solid var(--accent);
         }
 
         .browser-tab.new-tab {
-            min-width: 35px;
-            max-width: 35px;
+            min-width: 40px;
+            max-width: 40px;
             justify-content: center;
-            font-size: 20px;
             background: transparent;
-            border: none;
+            border: 2px dashed var(--border);
+            border-radius: 12px;
+            margin-left: 5px;
         }
 
         .browser-tab.new-tab:hover {
-            background: rgba(233, 69, 96, 0.2);
-        }
-
-        .tab-favicon {
-            font-size: 14px;
+            background: rgba(255, 51, 102, 0.1);
+            border-color: var(--accent);
         }
 
         .tab-title {
@@ -680,126 +424,79 @@ const HTML_PAGE = `<!DOCTYPE html>
             text-overflow: ellipsis;
             white-space: nowrap;
             font-size: 12px;
+            font-weight: 500;
         }
 
         .tab-close {
             background: none;
             border: none;
-            color: var(--text-secondary);
+            color: var(--text-tertiary);
             cursor: pointer;
             font-size: 16px;
-            padding: 0;
-            width: 18px;
-            height: 18px;
+            width: 20px;
+            height: 20px;
             display: flex;
             align-items: center;
             justify-content: center;
             border-radius: 50%;
-            opacity: 0;
             transition: all 0.2s;
-        }
-
-        .browser-tab:hover .tab-close {
-            opacity: 1;
         }
 
         .tab-close:hover {
             background: var(--accent);
             color: white;
         }
-
-        .add-tab-btn {
-            background: none;
-            border: none;
-            color: var(--accent);
-            font-size: 20px;
-            cursor: pointer;
-            padding: 5px 10px;
-            display: flex;
-            align-items: center;
-        }
-
-        .add-tab-btn:hover {
-            transform: scale(1.2);
-        }
         
         .toolbar {
-            height: 50px;
+            height: 60px;
             background: var(--bg-secondary);
-            border-bottom: 1px solid rgba(233, 69, 96, 0.2);
+            border-bottom: 1px solid var(--border);
             display: flex;
             align-items: center;
-            padding: 0 15px;
-            gap: 8px;
+            padding: 0 20px;
+            gap: 12px;
         }
         
         .nav-btn {
-            background: rgba(233, 69, 96, 0.2);
-            border: 1px solid var(--accent);
-            color: var(--accent);
-            padding: 6px 12px;
-            border-radius: 4px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 10px 16px;
+            border-radius: 10px;
             cursor: pointer;
-            font-size: 11px;
+            font-size: 13px;
             transition: all 0.3s;
             display: flex;
             align-items: center;
-            gap: 4px;
-            min-width: 60px;
-            justify-content: center;
-        }
-
-        [data-theme="light"] .nav-btn {
-            background: rgba(0, 128, 157, 0.1);
+            gap: 6px;
         }
         
         .nav-btn:hover:not(:disabled) {
-            background: var(--accent);
-            color: white;
+            background: rgba(255, 51, 102, 0.1);
+            border-color: var(--accent);
+            color: var(--accent);
         }
 
         .nav-btn:disabled {
-            opacity: 0.4;
+            opacity: 0.3;
             cursor: not-allowed;
-        }
-
-        .nav-btn.secondary {
-            background: transparent;
-            border-color: var(--text-tertiary);
-            color: var(--text-secondary);
-        }
-
-        .nav-btn.secondary:hover:not(:disabled) {
-            background: var(--text-tertiary);
-            color: white;
         }
         
         .address-bar {
             flex: 1;
-            background: var(--input-bg);
-            border: 1px solid rgba(233, 69, 96, 0.3);
-            border-radius: 15px;
-            padding: 8px 15px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 20px;
             color: var(--text-primary);
-            font-size: 12px;
+            font-size: 13px;
             display: flex;
             align-items: center;
-            gap: 8px;
-            min-width: 0;
+            gap: 10px;
         }
 
-        [data-theme="light"] .address-bar {
-            border-color: rgba(0, 128, 157, 0.3);
-        }
-
-        .secure-icon {
-            color: var(--success);
-            flex-shrink: 0;
-            font-size: 12px;
-        }
-
-        .secure-icon.insecure {
-            color: var(--warning);
+        .address-bar .icon {
+            color: var(--accent-secondary);
         }
 
         .url-text {
@@ -807,139 +504,47 @@ const HTML_PAGE = `<!DOCTYPE html>
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
-        }
-
-        .toolbar-actions {
-            display: flex;
-            gap: 5px;
-        }
-
-        .icon-btn {
-            background: none;
-            border: none;
             color: var(--text-secondary);
-            font-size: 16px;
+        }
+
+        .btn-newtab-toolbar {
+            background: linear-gradient(135deg, var(--accent-secondary) 0%, #00a0a0 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 10px;
             cursor: pointer;
-            padding: 5px;
-            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 600;
             transition: all 0.3s;
-            width: 32px;
-            height: 32px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.3);
         }
 
-        .icon-btn:hover {
-            background: rgba(233, 69, 96, 0.1);
-            color: var(--accent);
-        }
-
-        .icon-btn.active {
-            color: var(--accent);
-            background: rgba(233, 69, 96, 0.2);
+        .btn-newtab-toolbar:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(0, 212, 255, 0.4);
         }
         
         .viewer { 
             flex: 1;
             position: relative;
-            overflow: hidden;
+            background: white;
         }
 
         .tab-content {
             display: none;
             width: 100%;
             height: 100%;
-            position: relative;
         }
 
         .tab-content.active {
             display: block;
-        }
-
-        .iframe-container {
-            width: 100%;
-            height: 100%;
-            position: relative;
         }
         
         iframe { 
             width: 100%; 
             height: 100%; 
             border: none;
-            background: white;
-        }
-
-        .iframe-fallback {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: var(--bg-secondary);
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 40px;
-            text-align: center;
-        }
-
-        .iframe-fallback.active {
-            display: flex;
-        }
-
-        .fallback-icon {
-            font-size: 60px;
-            margin-bottom: 20px;
-            opacity: 0.5;
-        }
-
-        .fallback-title {
-            font-size: 20px;
-            color: var(--text-primary);
-            margin-bottom: 10px;
-        }
-
-        .fallback-text {
-            color: var(--text-secondary);
-            margin-bottom: 20px;
-            max-width: 400px;
-        }
-
-        .fallback-buttons {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-
-        .fallback-btn {
-            padding: 10px 20px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: all 0.3s;
-            border: none;
-        }
-
-        .fallback-btn.primary {
-            background: var(--accent);
-            color: white;
-        }
-
-        .fallback-btn.primary:hover {
-            background: var(--accent-hover);
-        }
-
-        .fallback-btn.secondary {
-            background: transparent;
-            color: var(--accent);
-            border: 1px solid var(--accent);
-        }
-
-        .fallback-btn.secondary:hover {
-            background: rgba(233, 69, 96, 0.1);
         }
         
         .welcome {
@@ -952,27 +557,43 @@ const HTML_PAGE = `<!DOCTYPE html>
         }
         
         .welcome-icon {
-            font-size: 60px;
-            margin-bottom: 15px;
-            opacity: 0.5;
+            font-size: 100px;
+            margin-bottom: 20px;
+            opacity: 0.3;
         }
         
         .welcome h2 {
             color: var(--text-secondary);
             font-weight: 300;
-            font-size: 16px;
+            font-size: 18px;
+        }
+
+        .settings-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 10px;
+            transition: all 0.3s;
+        }
+
+        .settings-btn:hover {
+            background: var(--glass);
+            color: var(--accent);
         }
 
         .settings-panel {
             position: absolute;
-            top: 90px;
-            right: 15px;
-            width: 300px;
+            top: 80px;
+            right: 20px;
+            width: 280px;
             background: var(--bg-secondary);
-            border: 2px solid var(--border);
-            border-radius: 10px;
-            padding: 20px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            padding: 25px;
+            box-shadow: var(--shadow);
             display: none;
             z-index: 1000;
         }
@@ -983,134 +604,72 @@ const HTML_PAGE = `<!DOCTYPE html>
 
         .settings-title {
             font-size: 18px;
-            font-weight: bold;
-            margin-bottom: 20px;
+            font-weight: 700;
+            margin-bottom: 25px;
             color: var(--accent);
         }
 
         .setting-item {
-            margin-bottom: 15px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid rgba(233, 69, 96, 0.2);
-        }
-
-        .setting-item:last-child {
-            border-bottom: none;
-            margin-bottom: 0;
-            padding-bottom: 0;
+            margin-bottom: 20px;
         }
 
         .setting-label {
-            display: block;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 8px;
             font-weight: 600;
             color: var(--text-primary);
-            font-size: 13px;
+            font-size: 14px;
         }
 
-        .setting-desc {
-            font-size: 11px;
-            color: var(--text-tertiary);
-            margin-bottom: 8px;
-        }
-
-        .toggle-switch {
+        .toggle {
+            width: 50px;
+            height: 26px;
+            background: var(--glass);
+            border-radius: 13px;
             position: relative;
-            display: inline-block;
-            width: 44px;
-            height: 20px;
-        }
-
-        .toggle-switch input {
-            opacity: 0;
-            width: 0;
-            height: 0;
-        }
-
-        .slider {
-            position: absolute;
             cursor: pointer;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background-color: #ccc;
-            transition: .3s;
-            border-radius: 20px;
+            transition: all 0.3s;
+            border: 1px solid var(--border);
         }
 
-        .slider:before {
-            position: absolute;
-            content: "";
-            height: 14px;
-            width: 14px;
-            left: 3px;
-            bottom: 3px;
-            background-color: white;
-            transition: .3s;
-            border-radius: 50%;
-        }
-
-        input:checked + .slider {
-            background-color: var(--accent);
-        }
-
-        input:checked + .slider:before {
-            transform: translateX(24px);
-        }
-
-        .btn-primary, .btn-secondary {
-            width: 100%;
-            padding: 10px;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 13px;
-            margin-top: 8px;
-            border: none;
-        }
-
-        .btn-primary {
+        .toggle.active {
             background: var(--accent);
-            color: white;
         }
 
-        .btn-secondary {
-            background: transparent;
-            color: var(--accent);
-            border: 1px solid var(--accent);
-        }
-
-        .mini-sidebar {
+        .toggle::after {
+            content: '';
             position: absolute;
-            left: 0;
-            top: 0;
-            bottom: 0;
-            width: 60px;
-            background: var(--bg-secondary);
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            padding-top: 20px;
-            z-index: 99;
-            border-right: 2px solid var(--border);
-        }
-        
-        .sidebar.hidden .mini-sidebar {
-            display: flex;
-        }
-        
-        .mini-icon {
-            color: var(--accent);
-            font-size: 20px;
-            margin-bottom: 15px;
-            cursor: pointer;
-            padding: 8px;
-            border-radius: 8px;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
             transition: all 0.3s;
         }
 
-        .mini-icon:hover {
-            background: rgba(233, 69, 96, 0.2);
+        .toggle.active::after {
+            left: 26px;
+        }
+
+        .btn-danger {
+            width: 100%;
+            padding: 12px;
+            background: transparent;
+            color: var(--accent);
+            border: 1px solid var(--accent);
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 13px;
+            margin-top: 10px;
+            transition: all 0.3s;
+        }
+
+        .btn-danger:hover {
+            background: var(--accent);
+            color: white;
         }
 
         .overlay {
@@ -1126,181 +685,459 @@ const HTML_PAGE = `<!DOCTYPE html>
         .overlay.active {
             display: block;
         }
-
-        .proxy-indicator {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: var(--warning);
-            color: white;
-            padding: 5px 10px;
-            border-radius: 15px;
-            font-size: 11px;
-            z-index: 100;
-            display: none;
-        }
-
-        .proxy-indicator.active {
-            display: block;
-        }
     </style>
 </head>
 <body>
-    <div class="app" id="app">
-        <!-- Sidopanel -->
-        <div class="sidebar" id="sidebar">
-            <div class="mini-sidebar">
-                <div class="mini-icon" onclick="toggleSidebar()" title="Visa sökfält">🔍</div>
-                <div class="mini-icon" onclick="toggleAiMode()" title="AI Mode">🤖</div>
-                <div class="mini-icon" onclick="toggleTheme()" title="Byt tema">🌓</div>
+    <div class="app">
+        <div class="sidebar">
+            <div class="header">
+                <div class="logo">
+                    <span class="logo-icon">🚀</span>
+                    <span>Nusse Proxy</span>
+                </div>
+                <div class="subtitle">Snabb & Säker Surfning</div>
             </div>
             
-            <div class="search-content">
-                <div class="header">
-                    <div class="logo">
-                        <span class="logo-icon">🚀</span>
-                        <span>Nusse Proxy</span>
-                        <span class="ai-badge">AI</span>
-                    </div>
-                    <div class="subtitle">Snabb & Säker Surfning</div>
+            <div class="search-box">
+                <div class="search-wrapper">
+                    <input type="text" id="query" placeholder="Sök på webben...">
+                    <button class="search-btn" id="searchBtn">🔍</button>
                 </div>
-                
-                <button class="toggle-btn" onclick="toggleSidebar()" title="Göm sökfält">◀</button>
-                
-                <div class="search-box">
-                    <div class="search-input-wrapper">
-                        <input type="text" id="query" placeholder="Sök på webben..." onkeypress="if(event.key==='Enter') search()">
-                        <button class="search-btn" onclick="search()">🔍</button>
-                    </div>
-                </div>
+            </div>
 
-                <div class="tabs">
-                    <button class="tab active" onclick="switchTab('search')" id="tab-search">🔍 Sök</button>
-                    <button class="tab" onclick="switchTab('bookmarks')" id="tab-bookmarks">⭐ Bokm.</button>
-                    <button class="tab" onclick="switchTab('history')" id="tab-history">🕐 Hist.</button>
+            <div class="tabs">
+                <button class="tab active" id="tab-search">🔍 Sök</button>
+                <button class="tab" id="tab-bookmarks">⭐ Bokmärken</button>
+                <button class="tab" id="tab-history">🕐 Historik</button>
+            </div>
+            
+            <div class="results active" id="results-search">
+                <div class="empty">
+                    <div class="empty-icon">🔎</div>
+                    <div>Börja söka på webben</div>
                 </div>
-                
-                <div class="results active" id="results-search">
-                    <div class="empty-list">
-                        <div style="font-size: 30px; margin-bottom: 10px;">🔎</div>
-                        <div>Börja söka</div>
-                    </div>
-                </div>
+            </div>
 
-                <div class="results" id="results-bookmarks">
-                    <div class="empty-list" id="empty-bookmarks">
-                        <div style="font-size: 30px; margin-bottom: 10px;">⭐</div>
-                        <div>Inga bokmärken</div>
-                    </div>
-                    <div id="bookmarks-list"></div>
+            <div class="results" id="results-bookmarks">
+                <div class="empty">
+                    <div class="empty-icon">⭐</div>
+                    <div>Inga bokmärken ännu</div>
                 </div>
+            </div>
 
-                <div class="results" id="results-history">
-                    <div class="empty-list" id="empty-history">
-                        <div style="font-size: 30px; margin-bottom: 10px;">🕐</div>
-                        <div>Ingen historik</div>
-                    </div>
-                    <div id="history-list"></div>
+            <div class="results" id="results-history">
+                <div class="empty">
+                    <div class="empty-icon">🕐</div>
+                    <div>Ingen historik ännu</div>
                 </div>
             </div>
         </div>
 
-        <!-- Huvudinnehåll -->
         <div class="main">
             <div class="tab-bar" id="tabBar">
-                <button class="add-tab-btn" onclick="newTab()" title="Ny flik">+</button>
+                <div class="browser-tab new-tab" id="newTabBtn">+</div>
             </div>
 
             <div class="toolbar">
-                <button class="nav-btn" onclick="goBack()" id="btn-back" disabled>←</button>
-                <button class="nav-btn" onclick="goForward()" id="btn-forward" disabled>→</button>
-                <button class="nav-btn" onclick="reload()">↻</button>
+                <button class="nav-btn" id="btn-back" disabled>←</button>
+                <button class="nav-btn" id="btn-forward" disabled>→</button>
+                <button class="nav-btn" id="btn-reload">↻</button>
                 
                 <div class="address-bar">
-                    <span class="secure-icon" id="secureIcon">🔒</span>
+                    <span class="icon">🔒</span>
                     <span class="url-text" id="addressBar">Ny flik</span>
                 </div>
 
-                <button class="nav-btn secondary" onclick="tryProxy()" id="proxyBtn" style="display:none;">🔄 Proxy</button>
-                <button class="nav-btn secondary" onclick="openInNewTab()" title="Öppna i ny flik">↗️</button>
-
-                <div class="toolbar-actions">
-                    <button class="icon-btn" onclick="toggleAiMode()" id="ai-btn" title="AI Mode">🤖</button>
-                    <button class="icon-btn" onclick="toggleTheme()" title="Tema">🌓</button>
-                    <button class="icon-btn" onclick="toggleSettings()" title="Inställningar">⚙️</button>
-                </div>
+                <button class="btn-newtab-toolbar" id="btn-open-newtab">↗️ Ny flik</button>
+                <button class="settings-btn" id="btn-settings">⚙️</button>
             </div>
             
             <div class="viewer" id="viewer">
                 <div class="welcome">
-                    <div class="welcome-icon">🌐</div>
-                    <h2>Öppna en ny flik för att börja surfa</h2>
+                    <div class="welcome-icon"></div>
+                    <h2></h2>
                 </div>
             </div>
         </div>
 
-        <div class="overlay" id="overlay" onclick="toggleSettings()"></div>
+        <div class="overlay" id="overlay"></div>
         <div class="settings-panel" id="settings-panel">
             <div class="settings-title">⚙️ Inställningar</div>
             
             <div class="setting-item">
-                <label class="setting-label">🤖 AI Mode</label>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="ai-toggle" onchange="toggleAiMode()">
-                    <span class="slider"></span>
-                </label>
+                <div class="setting-label">
+                    <span>🌓 Mörkt Tema</span>
+                    <div class="toggle" id="themeToggle"></div>
+                </div>
             </div>
 
-            <div class="setting-item">
-                <label class="setting-label">🌓 Mörkt Tema</label>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="theme-toggle" onchange="toggleTheme()">
-                    <span class="slider"></span>
-                </label>
-            </div>
-
-            <div class="setting-item">
-                <label class="setting-label">🔄 Auto Proxy</label>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="autoproxy-toggle" checked>
-                    <span class="slider"></span>
-                </label>
-            </div>
-
-            <button class="btn-primary" onclick="clearAllData()">🗑️ Rensa Allt</button>
-            <button class="btn-secondary" onclick="exportBookmarks()">📤 Exportera</button>
-            <button class="btn-secondary" onclick="toggleSettings()">Stäng</button>
+            <button class="btn-danger" id="btn-clear-data">🗑️ Rensa all data</button>
+            <button class="btn-danger" id="btn-close-settings" style="border-color: var(--text-tertiary); color: var(--text-secondary);">Stäng</button>
         </div>
     </div>
 
     <script>
+        // Globala variabler
         let results = [];
-        let bookmarks = JSON.parse(localStorage.getItem('nusse_bookmarks') || '[]');
-        let history = JSON.parse(localStorage.getItem('nusse_history') || '[]');
-        let settings = JSON.parse(localStorage.getItem('nusse_settings') || '{"aiMode":false,"darkMode":true,"saveHistory":true,"autoProxy":true}');
-        let sidebarVisible = true;
-        let currentSidebarTab = 'search';
+        let bookmarks = [];
+        let history = [];
         let tabs = [];
         let activeTabId = null;
         let tabCounter = 0;
+        let darkMode = true;
 
+        // Initialisering
         document.addEventListener('DOMContentLoaded', function() {
-            loadSettings();
-            updateBookmarksList();
-            updateHistoryList();
+            console.log('DOM loaded, initializing...');
+            
+            // Ladda data från localStorage
+            try {
+                bookmarks = JSON.parse(localStorage.getItem('nusse_bookmarks') || '[]');
+                history = JSON.parse(localStorage.getItem('nusse_history') || '[]');
+            } catch (e) {
+                console.error('Error loading localStorage:', e);
+                bookmarks = [];
+                history = [];
+            }
+            
+            // Sätt upp event listeners
+            setupEventListeners();
+            
+            // Skapa första fliken
             newTab();
+            
+            // Uppdatera UI
+            updateBookmarks();
+            updateHistory();
         });
 
-        function loadSettings() {
-            if (settings.aiMode) toggleAiMode(true);
-            if (!settings.darkMode) toggleTheme(true);
-            document.getElementById('ai-toggle').checked = settings.aiMode;
-            document.getElementById('theme-toggle').checked = settings.darkMode;
-            document.getElementById('autoproxy-toggle').checked = settings.autoProxy !== false;
+        function setupEventListeners() {
+            // Sök
+            document.getElementById('searchBtn').addEventListener('click', search);
+            document.getElementById('query').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') search();
+            });
+            
+            // Flikar
+            document.getElementById('tab-search').addEventListener('click', function() { switchTab('search'); });
+            document.getElementById('tab-bookmarks').addEventListener('click', function() { switchTab('bookmarks'); });
+            document.getElementById('tab-history').addEventListener('click', function() { switchTab('history'); });
+            
+            // Ny flik
+            document.getElementById('newTabBtn').addEventListener('click', newTab);
+            
+            // Navigation
+            document.getElementById('btn-back').addEventListener('click', goBack);
+            document.getElementById('btn-forward').addEventListener('click', goForward);
+            document.getElementById('btn-reload').addEventListener('click', reload);
+            
+            // Öppna i ny flik
+            document.getElementById('btn-open-newtab').addEventListener('click', openInNewTab);
+            
+            // Inställningar
+            document.getElementById('btn-settings').addEventListener('click', toggleSettings);
+            document.getElementById('overlay').addEventListener('click', toggleSettings);
+            document.getElementById('btn-close-settings').addEventListener('click', toggleSettings);
+            document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+            document.getElementById('btn-clear-data').addEventListener('click', clearData);
         }
 
-        function saveSettings() {
-            localStorage.setItem('nusse_settings', JSON.stringify(settings));
+        function search() {
+            const q = document.getElementById('query').value.trim();
+            if (!q) return;
+            
+            switchTab('search');
+            const div = document.getElementById('results-search');
+            div.innerHTML = '<div class="loading">Söker...</div>';
+            
+            fetch('/?q=' + encodeURIComponent(q))
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) {
+                        div.innerHTML = '<div class="error">' + escape(data.error) + '</div>';
+                        return;
+                    }
+                    results = data.organic_results || [];
+                    showResults();
+                    addToHistory(q, 'search');
+                })
+                .catch(e => {
+                    div.innerHTML = '<div class="error">Fel: ' + escape(e.message) + '</div>';
+                });
+        }
+
+        function showResults() {
+            const div = document.getElementById('results-search');
+            
+            if (results.length === 0) {
+                div.innerHTML = '<div class="empty"><div class="empty-icon">😕</div>Inga resultat hittades</div>';
+                return;
+            }
+            
+            let html = '<div class="results-header">Visar ' + results.length + ' resultat</div>';
+            
+            html += results.map((r, i) => {
+                return '<div class="result">' +
+                    '<div class="result-title">' + escape(r.title) + '</div>' +
+                    '<div class="result-url">' + escape(r.displayed_url || r.link) + '</div>' +
+                    '<div class="result-snippet">' + escape(r.snippet || '') + '</div>' +
+                    '<div class="result-actions">' +
+                        '<button class="btn-action btn-open" data-index="' + i + '">📂 Öppna här</button>' +
+                        '<button class="btn-action btn-newtab" data-index="' + i + '">↗️ Ny flik</button>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
+            
+            div.innerHTML = html;
+            
+            // Sätt upp event listeners för resultatknappar
+            div.querySelectorAll('.btn-open').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    openSite(parseInt(this.dataset.index));
+                });
+            });
+            
+            div.querySelectorAll('.btn-newtab').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    openResultInNewTab(parseInt(this.dataset.index));
+                });
+            });
+        }
+
+        function openSite(index) {
+            const site = results[index];
+            if (!site || !activeTabId) return;
+            
+            const tab = tabs.find(t => t.id === activeTabId);
+            if (!tab) return;
+            
+            tab.title = site.title.substring(0, 25);
+            tab.url = site.link;
+            tab.history.push(site.link);
+            tab.historyIndex = tab.history.length - 1;
+            
+            updateTabUI(tab);
+            document.getElementById('tab-content-' + tab.id).innerHTML = 
+                '<iframe src="' + site.link + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>';
+            
+            addToHistory(site.title, 'visit');
+        }
+
+        function openResultInNewTab(index) {
+            window.open(results[index].link, '_blank');
+        }
+
+        function openInNewTab() {
+            const tab = tabs.find(t => t.id === activeTabId);
+            if (tab && tab.url) window.open(tab.url, '_blank');
+        }
+
+        function newTab() {
+            tabCounter++;
+            const tabId = 'tab-' + tabCounter;
+            
+            tabs.push({
+                id: tabId,
+                title: 'Ny flik',
+                url: '',
+                history: [],
+                historyIndex: -1
+            });
+            
+            const tabEl = document.createElement('div');
+            tabEl.className = 'browser-tab';
+            tabEl.id = 'tab-el-' + tabId;
+            tabEl.innerHTML = '<span class="tab-title" id="tab-title-' + tabId + '">Ny flik</span><button class="tab-close" data-tabid="' + tabId + '">×</button>';
+            
+            // Klick på fliken för att växla
+            tabEl.addEventListener('click', function(e) {
+                if (!e.target.classList.contains('tab-close')) {
+                    switchToTab(tabId);
+                }
+            });
+            
+            // Klick på stäng-knappen
+            tabEl.querySelector('.tab-close').addEventListener('click', function(e) {
+                e.stopPropagation();
+                closeTab(tabId);
+            });
+            
+            const tabBar = document.getElementById('tabBar');
+            tabBar.insertBefore(tabEl, tabBar.lastElementChild);
+            
+            const content = document.createElement('div');
+            content.className = 'tab-content';
+            content.id = 'tab-content-' + tabId;
+            content.innerHTML = '<div class="welcome"><div class="welcome-icon">🌐</div><h2>Välj ett sökresultat för att börja surfa</h2></div>';
+            document.getElementById('viewer').appendChild(content);
+            
+            switchToTab(tabId);
+        }
+
+        function switchToTab(tabId) {
+            document.querySelectorAll('.browser-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            const tabEl = document.getElementById('tab-el-' + tabId);
+            const contentEl = document.getElementById('tab-content-' + tabId);
+            
+            if (tabEl) tabEl.classList.add('active');
+            if (contentEl) contentEl.classList.add('active');
+            
+            activeTabId = tabId;
+            const tab = tabs.find(t => t.id === tabId);
+            if (tab) {
+                document.getElementById('addressBar').textContent = tab.url || 'Ny flik';
+                updateNavButtons();
+            }
+        }
+
+        function closeTab(tabId) {
+            const idx = tabs.findIndex(t => t.id === tabId);
+            if (idx === -1) return;
+            
+            tabs.splice(idx, 1);
+            
+            const tabEl = document.getElementById('tab-el-' + tabId);
+            const contentEl = document.getElementById('tab-content-' + tabId);
+            
+            if (tabEl) tabEl.remove();
+            if (contentEl) contentEl.remove();
+            
+            if (activeTabId === tabId) {
+                if (tabs.length > 0) {
+                    switchToTab(tabs[Math.max(0, idx - 1)].id);
+                } else {
+                    newTab();
+                }
+            }
+        }
+
+        function updateTabUI(tab) {
+            const titleEl = document.getElementById('tab-title-' + tab.id);
+            if (titleEl) titleEl.textContent = tab.title;
+            document.getElementById('addressBar').textContent = tab.url;
+            updateNavButtons();
+        }
+
+        function goBack() {
+            const tab = tabs.find(t => t.id === activeTabId);
+            if (!tab || tab.historyIndex <= 0) return;
+            
+            tab.historyIndex--;
+            const url = tab.history[tab.historyIndex];
+            tab.url = url;
+            updateTabUI(tab);
+            document.getElementById('tab-content-' + tab.id).innerHTML = 
+                '<iframe src="' + url + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>';
+        }
+
+        function goForward() {
+            const tab = tabs.find(t => t.id === activeTabId);
+            if (!tab || tab.historyIndex >= tab.history.length - 1) return;
+            
+            tab.historyIndex++;
+            const url = tab.history[tab.historyIndex];
+            tab.url = url;
+            updateTabUI(tab);
+            document.getElementById('tab-content-' + tab.id).innerHTML = 
+                '<iframe src="' + url + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>';
+        }
+
+        function reload() {
+            const tab = tabs.find(t => t.id === activeTabId);
+            if (!tab || !tab.url) return;
+            const iframe = document.getElementById('tab-content-' + tab.id).querySelector('iframe');
+            if (iframe) iframe.src = tab.url;
+        }
+
+        function updateNavButtons() {
+            const tab = tabs.find(t => t.id === activeTabId);
+            document.getElementById('btn-back').disabled = !tab || tab.historyIndex <= 0;
+            document.getElementById('btn-forward').disabled = !tab || tab.historyIndex >= tab.history.length - 1;
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            document.querySelectorAll('.results').forEach(r => r.classList.remove('active'));
+            document.getElementById('results-' + tab).classList.add('active');
+        }
+
+        function updateBookmarks() {
+            const div = document.getElementById('results-bookmarks');
+            const empty = div.querySelector('.empty');
+            
+            if (bookmarks.length === 0) {
+                if (empty) empty.style.display = 'block';
+                div.innerHTML = '';
+                if (empty) div.appendChild(empty);
+                return;
+            }
+            
+            if (empty) empty.style.display = 'none';
+            div.innerHTML = bookmarks.map((b, i) => 
+                '<div class="result bookmark-item" data-index="' + i + '">' +
+                    '<div class="result-title">⭐ ' + escape(b.title) + '</div>' +
+                    '<div class="result-url">' + escape(b.url) + '</div>' +
+                '</div>'
+            ).join('');
+            
+            // Sätt upp event listeners för bokmärken
+            div.querySelectorAll('.bookmark-item').forEach(item => {
+                item.addEventListener('click', function() {
+                    openBookmark(parseInt(this.dataset.index));
+                });
+            });
+        }
+
+        function openBookmark(index) {
+            const b = bookmarks[index];
+            if (!b) return;
+            
+            if (!activeTabId) newTab();
+            const tab = tabs.find(t => t.id === activeTabId);
+            if (!tab) return;
+            
+            tab.title = b.title.substring(0, 25);
+            tab.url = b.url;
+            tab.history.push(b.url);
+            tab.historyIndex = tab.history.length - 1;
+            
+            updateTabUI(tab);
+            document.getElementById('tab-content-' + tab.id).innerHTML = 
+                '<iframe src="' + b.url + '" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>';
+        }
+
+        function addToHistory(title, type) {
+            history.unshift({ title: title, type: type, time: new Date().toLocaleString('sv-SE') });
+            if (history.length > 50) history = history.slice(0, 50);
+            try {
+                localStorage.setItem('nusse_history', JSON.stringify(history));
+            } catch (e) {
+                console.error('Error saving history:', e);
+            }
+            updateHistory();
+        }
+
+        function updateHistory() {
+            const div = document.getElementById('results-history');
+            const empty = div.querySelector('.empty');
+            
+            if (history.length === 0) {
+                if (empty) empty.style.display = 'block';
+                div.innerHTML = '';
+                if (empty) div.appendChild(empty);
+                return;
+            }
+            
+            if (empty) empty.style.display = 'none';
+            div.innerHTML = history.map(h => 
+                '<div class="result">' +
+                    '<div class="result-title">' + (h.type === 'search' ? '🔍' : '🌐') + ' ' + escape(h.title) + '</div>' +
+                    '<div class="result-url">' + h.time + '</div>' +
+                '</div>'
+            ).join('');
         }
 
         function toggleSettings() {
@@ -1308,445 +1145,26 @@ const HTML_PAGE = `<!DOCTYPE html>
             document.getElementById('overlay').classList.toggle('active');
         }
 
-        function toggleAiMode(forceState) {
-            const app = document.getElementById('app');
-            if (typeof forceState !== 'undefined') {
-                settings.aiMode = forceState;
-            } else {
-                settings.aiMode = !settings.aiMode;
-            }
-            app.classList.toggle('ai-mode', settings.aiMode);
-            document.getElementById('ai-btn').classList.toggle('active', settings.aiMode);
-            document.getElementById('ai-toggle').checked = settings.aiMode;
-            saveSettings();
+        function toggleTheme() {
+            darkMode = !darkMode;
+            document.body.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+            document.getElementById('themeToggle').classList.toggle('active', !darkMode);
         }
 
-        function toggleTheme(forceState) {
-            const body = document.body;
-            if (typeof forceState !== 'undefined') {
-                settings.darkMode = !forceState;
-            } else {
-                settings.darkMode = !settings.darkMode;
-            }
-            body.setAttribute('data-theme', settings.darkMode ? 'dark' : 'light');
-            document.getElementById('theme-toggle').checked = settings.darkMode;
-            saveSettings();
-        }
-
-        function toggleSidebar() {
-            sidebarVisible = !sidebarVisible;
-            document.getElementById('sidebar').classList.toggle('hidden', !sidebarVisible);
-        }
-
-        function switchTab(tab) {
-            currentSidebarTab = tab;
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.getElementById('tab-' + tab).classList.add('active');
-            document.querySelectorAll('.results').forEach(r => r.classList.remove('active'));
-            document.getElementById('results-' + tab).classList.add('active');
-        }
-
-        function newTab() {
-            tabCounter++;
-            const tabId = 'tab-' + tabCounter;
-            const tab = {
-                id: tabId,
-                title: 'Ny flik',
-                url: '',
-                history: [],
-                historyIndex: -1,
-                useProxy: false,
-                failedDirect: false
-            };
-            tabs.push(tab);
-            createTabElement(tab);
-            createTabContent(tab);
-            switchToTab(tabId);
-        }
-
-        function createTabElement(tab) {
-            const tabBar = document.getElementById('tabBar');
-            const addBtn = tabBar.querySelector('.add-tab-btn');
-            const tabEl = document.createElement('div');
-            tabEl.className = 'browser-tab';
-            tabEl.id = 'tab-el-' + tab.id;
-            tabEl.onclick = function(e) {
-                if (e.target.classList.contains('tab-close')) return;
-                switchToTab(tab.id);
-            };
-            tabEl.innerHTML = 
-                '<span class="tab-favicon" id="tab-fav-' + tab.id + '">🌐</span>' +
-                '<span class="tab-title" id="tab-title-' + tab.id + '">' + tab.title + '</span>' +
-                '<button class="tab-close" onclick="closeTab(\'' + tab.id + '\')">×</button>';
-            tabBar.insertBefore(tabEl, addBtn);
-        }
-
-        function createTabContent(tab) {
-            const viewer = document.getElementById('viewer');
-            const content = document.createElement('div');
-            content.className = 'tab-content';
-            content.id = 'tab-content-' + tab.id;
-            content.innerHTML = 
-                '<div class="iframe-container" id="iframe-container-' + tab.id + '">' +
-                    '<div class="welcome">' +
-                        '<div class="welcome-icon">🌐</div>' +
-                        '<h2>Välj ett sökresultat för att börja surfa</h2>' +
-                    '</div>' +
-                    '<div class="proxy-indicator" id="proxy-ind-' + tab.id + '">Proxy-läge</div>' +
-                '</div>' +
-                '<div class="iframe-fallback" id="fallback-' + tab.id + '">' +
-                    '<div class="fallback-icon">⚠️</div>' +
-                    '<div class="fallback-title">Sidan kunde inte laddas</div>' +
-                    '<div class="fallback-text">Denna hemsida blockerar visning i iframe.</div>' +
-                    '<div class="fallback-buttons">' +
-                        '<button class="fallback-btn primary" onclick="tryProxy()">🔄 Använd Proxy</button>' +
-                        '<button class="fallback-btn secondary" onclick="openInNewTab()">↗️ Öppna i ny flik</button>' +
-                        '<button class="fallback-btn secondary" onclick="goBack()">← Gå tillbaka</button>' +
-                    '</div>' +
-                '</div>';
-            viewer.appendChild(content);
-        }
-
-        function switchToTab(tabId) {
-            document.querySelectorAll('.browser-tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            const tabEl = document.getElementById('tab-el-' + tabId);
-            const contentEl = document.getElementById('tab-content-' + tabId);
-            if (tabEl) tabEl.classList.add('active');
-            if (contentEl) contentEl.classList.add('active');
-            activeTabId = tabId;
-            const tab = tabs.find(t => t.id === tabId);
-            if (tab) {
-                document.getElementById('addressBar').textContent = tab.url || 'Ny flik';
-                document.getElementById('secureIcon').textContent = tab.useProxy ? '⚠️' : '🔒';
-                document.getElementById('secureIcon').className = tab.useProxy ? 'secure-icon insecure' : 'secure-icon';
-                document.getElementById('proxyBtn').style.display = tab.url ? 'inline-flex' : 'none';
-                updateNavButtons();
-            }
-        }
-
-        function closeTab(tabId) {
-            const index = tabs.findIndex(t => t.id === tabId);
-            if (index === -1) return;
-            tabs.splice(index, 1);
-            document.getElementById('tab-el-' + tabId).remove();
-            document.getElementById('tab-content-' + tabId).remove();
-            if (activeTabId === tabId) {
-                if (tabs.length > 0) {
-                    switchToTab(tabs[Math.min(index, tabs.length - 1)].id);
-                } else {
-                    newTab();
-                }
-            }
-        }
-
-        async function search() {
-            const q = document.getElementById('query').value.trim();
-            if (!q) return;
-            switchTab('search');
-            const div = document.getElementById('results-search');
-            div.innerHTML = '<div class="loading">Söker...</div>';
-            try {
-                const res = await fetch('/?q=' + encodeURIComponent(q));
-                const data = await res.json();
-                if (data.error) {
-                    div.innerHTML = '<div class="error-msg">' + data.error + '</div>';
-                    return;
-                }
-                results = data.organic_results || [];
-                showResults();
-                addToHistory(q, 'search');
-            } catch (e) {
-                div.innerHTML = '<div class="error-msg">Fel: ' + e.message + '</div>';
-            }
-        }
-
-        function showResults() {
-            const div = document.getElementById('results-search');
-            if (results.length === 0) {
-                div.innerHTML = '<div class="no-results">Inga resultat hittades</div>';
-                return;
-            }
-            let html = '<div class="results-count">Visar ' + results.length + ' resultat</div>';
-            html += results.map((r, i) => {
-                const isBookmarked = bookmarks.some(b => b.url === r.link);
-                return '<div class="result" onclick="openSite(' + i + ')">' +
-                    '<button class="bookmark-btn" onclick="event.stopPropagation(); toggleBookmark(' + i + ')" title="' + (isBookmarked ? 'Ta bort' : 'Spara') + '">' +
-                        (isBookmarked ? '⭐' : '☆') +
-                    '</button>' +
-                    '<div class="result-title">' + escape(r.title) + '</div>' +
-                    '<div class="result-url">' + escape(r.displayed_url || r.link) + '</div>' +
-                    '<div class="result-snippet">' + escape(r.snippet || '') + '</div>' +
-                '</div>';
-            }).join('');
-            div.innerHTML = html;
-        }
-
-        function openSite(index) {
-            const site = results[index];
-            if (!site || !activeTabId) return;
-            const tab = tabs.find(t => t.id === activeTabId);
-            if (!tab) return;
-            tab.useProxy = false;
-            tab.failedDirect = false;
-            tab.title = site.title.substring(0, 20) + (site.title.length > 20 ? '...' : '');
-            tab.url = site.link;
-            if (tab.historyIndex < tab.history.length - 1) {
-                tab.history = tab.history.slice(0, tab.historyIndex + 1);
-            }
-            tab.history.push({url: site.link, title: site.title});
-            tab.historyIndex++;
-            updateTabUI(tab);
-            loadUrl(site.link, false);
-            addToHistory(site.title, 'visit');
-        }
-
-        function updateTabUI(tab) {
-            document.getElementById('tab-title-' + tab.id).textContent = tab.title;
-            document.getElementById('tab-fav-' + tab.id).textContent = tab.useProxy ? '🔄' : '🌐';
-            document.getElementById('addressBar').textContent = tab.url;
-            document.getElementById('secureIcon').textContent = tab.useProxy ? '⚠️' : '🔒';
-            document.getElementById('secureIcon').className = tab.useProxy ? 'secure-icon insecure' : 'secure-icon';
-            document.getElementById('proxyBtn').style.display = 'inline-flex';
-            updateNavButtons();
-        }
-
-        function loadUrl(url, useProxy) {
-            const tab = tabs.find(t => t.id === activeTabId);
-            if (!tab) return;
-            const container = document.getElementById('iframe-container-' + tab.id);
-            const fallback = document.getElementById('fallback-' + tab.id);
-            const proxyInd = document.getElementById('proxy-ind-' + tab.id);
-            fallback.classList.remove('active');
-            proxyInd.classList.toggle('active', useProxy);
-            
-            const iframe = document.createElement('iframe');
-            iframe.id = 'frame-' + tab.id;
-            iframe.sandbox = 'allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation allow-downloads allow-modals';
-            
-            let loadTimeout;
-            
-            iframe.onload = function() {
-                clearTimeout(loadTimeout);
+        function clearData() {
+            if (confirm('Radera all data?')) {
                 try {
-                    const doc = iframe.contentDocument || iframe.contentWindow.document;
-                    if (doc && doc.body && doc.body.innerHTML.length > 0) {
-                        fallback.classList.remove('active');
-                    }
-                } catch(e) {
-                    fallback.classList.remove('active');
+                    localStorage.clear();
+                } catch (e) {
+                    console.error('Error clearing localStorage:', e);
                 }
-            };
-            
-            iframe.onerror = function() {
-                clearTimeout(loadTimeout);
-                handleLoadFailure();
-            };
-            
-            loadTimeout = setTimeout(function() {
-                try {
-                    if (!iframe.contentDocument || !iframe.contentDocument.body || iframe.contentDocument.body.innerHTML === '') {
-                        handleLoadFailure();
-                    }
-                } catch(e) {
-                    // Cross-origin, anta OK om ingen error
-                }
-            }, 4000);
-            
-            function handleLoadFailure() {
-                tab.failedDirect = true;
-                if (settings.autoProxy && !useProxy) {
-                    tryProxy();
-                } else {
-                    fallback.classList.add('active');
-                }
-            }
-            
-            container.innerHTML = '';
-            container.appendChild(iframe);
-            container.appendChild(proxyInd);
-            
-            if (useProxy) {
-                iframe.src = '/proxy?url=' + encodeURIComponent(url);
-            } else {
-                iframe.src = url;
-            }
-        }
-
-        function tryProxy() {
-            const tab = tabs.find(t => t.id === activeTabId);
-            if (!tab || !tab.url) return;
-            tab.useProxy = true;
-            updateTabUI(tab);
-            loadUrl(tab.url, true);
-        }
-
-        function openInNewTab() {
-            const tab = tabs.find(t => t.id === activeTabId);
-            if (!tab || !tab.url) return;
-            window.open(tab.url, '_blank');
-        }
-
-        function goBack() {
-            const tab = tabs.find(t => t.id === activeTabId);
-            if (!tab || tab.historyIndex <= 0) return;
-            tab.historyIndex--;
-            const item = tab.history[tab.historyIndex];
-            tab.url = item.url;
-            tab.useProxy = false;
-            updateTabUI(tab);
-            loadUrl(item.url, false);
-        }
-
-        function goForward() {
-            const tab = tabs.find(t => t.id === activeTabId);
-            if (!tab || tab.historyIndex >= tab.history.length - 1) return;
-            tab.historyIndex++;
-            const item = tab.history[tab.historyIndex];
-            tab.url = item.url;
-            tab.useProxy = false;
-            updateTabUI(tab);
-            loadUrl(item.url, false);
-        }
-
-        function reload() {
-            const tab = tabs.find(t => t.id === activeTabId);
-            if (!tab || !tab.url) return;
-            loadUrl(tab.url, tab.useProxy);
-        }
-
-        function updateNavButtons() {
-            const tab = tabs.find(t => t.id === activeTabId);
-            const canGoBack = tab && tab.historyIndex > 0;
-            const canGoForward = tab && tab.historyIndex < tab.history.length - 1;
-            document.getElementById('btn-back').disabled = !canGoBack;
-            document.getElementById('btn-forward').disabled = !canGoForward;
-        }
-
-        function toggleBookmark(index) {
-            const site = results[index];
-            const existingIndex = bookmarks.findIndex(b => b.url === site.link);
-            if (existingIndex >= 0) {
-                bookmarks.splice(existingIndex, 1);
-            } else {
-                bookmarks.push({
-                    title: site.title,
-                    url: site.link,
-                    date: new Date().toISOString()
-                });
-            }
-            localStorage.setItem('nusse_bookmarks', JSON.stringify(bookmarks));
-            updateBookmarksList();
-            showResults();
-        }
-
-        function updateBookmarksList() {
-            const div = document.getElementById('bookmarks-list');
-            const empty = document.getElementById('empty-bookmarks');
-            if (bookmarks.length === 0) {
-                div.innerHTML = '';
-                empty.style.display = 'block';
-                return;
-            }
-            empty.style.display = 'none';
-            div.innerHTML = bookmarks.map((b, i) => 
-                '<div class="bookmark-item" onclick="openBookmark(' + i + ')">' +
-                    '<span class="bookmark-icon">⭐</span>' +
-                    '<div class="bookmark-info">' +
-                        '<div class="bookmark-title">' + escape(b.title) + '</div>' +
-                        '<div class="bookmark-url">' + escape(b.url) + '</div>' +
-                    '</div>' +
-                    '<button class="delete-btn" onclick="event.stopPropagation(); deleteBookmark(' + i + ')">🗑️</button>' +
-                '</div>'
-            ).join('');
-        }
-
-        function openBookmark(index) {
-            const b = bookmarks[index];
-            if (!activeTabId) newTab();
-            const tab = tabs.find(t => t.id === activeTabId);
-            if (!tab) return;
-            tab.title = b.title.substring(0, 20);
-            tab.url = b.url;
-            tab.useProxy = false;
-            if (tab.historyIndex < tab.history.length - 1) {
-                tab.history = tab.history.slice(0, tab.historyIndex + 1);
-            }
-            tab.history.push({url: b.url, title: b.title});
-            tab.historyIndex++;
-            updateTabUI(tab);
-            loadUrl(b.url, false);
-            addToHistory(b.title, 'bookmark');
-        }
-
-        function deleteBookmark(index) {
-            bookmarks.splice(index, 1);
-            localStorage.setItem('nusse_bookmarks', JSON.stringify(bookmarks));
-            updateBookmarksList();
-            showResults();
-        }
-
-        function addToHistory(title, type) {
-            if (!settings.saveHistory) return;
-            history.unshift({
-                title: title,
-                url: type === 'search' ? 'Sök: ' + title : title,
-                type: type,
-                time: new Date().toLocaleString('sv-SE')
-            });
-            if (history.length > 50) history = history.slice(0, 50);
-            localStorage.setItem('nusse_history', JSON.stringify(history));
-            updateHistoryList();
-        }
-
-        function updateHistoryList() {
-            const div = document.getElementById('history-list');
-            const empty = document.getElementById('empty-history');
-            if (history.length === 0) {
-                div.innerHTML = '';
-                empty.style.display = 'block';
-                return;
-            }
-            empty.style.display = 'none';
-            div.innerHTML = history.map((h, i) => 
-                '<div class="history-item">' +
-                    '<span class="history-icon">' + (h.type === 'search' ? '🔍' : '⭐') + '</span>' +
-                    '<div class="history-info">' +
-                        '<div class="history-title">' + escape(h.title) + '</div>' +
-                        '<div class="history-time">' + escape(h.time) + '</div>' +
-                    '</div>' +
-                    '<button class="delete-btn" onclick="deleteHistory(' + i + ')">🗑️</button>' +
-                '</div>'
-            ).join('');
-        }
-
-        function deleteHistory(index) {
-            history.splice(index, 1);
-            localStorage.setItem('nusse_history', JSON.stringify(history));
-            updateHistoryList();
-        }
-
-        function clearAllData() {
-            if (confirm('Radera ALL data?')) {
-                localStorage.clear();
                 location.reload();
             }
         }
 
-        function exportBookmarks() {
-            const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(bookmarks, null, 2));
-            const a = document.createElement('a');
-            a.setAttribute('href', dataStr);
-            a.setAttribute('download', 'nusse_bookmarks.json');
-            a.click();
-        }
-
         function escape(text) {
             if (!text) return '';
-            return text
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;');
+            return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
         }
     </script>
 </body>
